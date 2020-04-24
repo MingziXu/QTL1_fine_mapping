@@ -1,0 +1,750 @@
+=================================SNP calling======================================
+==================================================================================
+1. demultiplex
+1.1 make a barcode file
+mac2unix /data/qtl4cgbs/sequence_and_barcode/1d_plate2_barcode.txt
+mac2unix: converting file /data/qtl4cgbs/sequence_and_barcode/1d_plate2_barcode.txt to Unix format ...
+
+1.2 demultiplex 
+fastq-multx -B /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/1d_plate2_barcode.txt /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/CA7A2ANXX_3_fastq.gz -o /data/GBS_Xu/qtl1dgbs/1d_demultiplexed_m1_new/1dplate2_%_m1.fq
+fastq-multx -B /data/GBS_Xu/qtl4cgbs/sequence_and_barcode/qtl4_plate11_barcode.txt /data/GBS_Xu/qtl4cgbs/sequence_and_barcode/CA7A2ANXX_6_fastq.gz -o /data/GBS_Xu/qtl1dgbs/qtl4_plate11_demultiplexed_m1_new/qtl4plate11_%_m1.fq
+fastq-multx -B /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/1d_plate2_barcode.txt /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/9098_8757_67434_CB3C6ANXX_1D_plate3_R1.fastq.gz -o /data/GBS_Xu/qtl1dgbs/1d_demultiplexed_m1_new/1dplate3_%_m1.fq
+fastq-multx -B /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/1d_plate2_barcode.txt /data/GBS_Xu/qtl1dgbs/sequence_and_barcode/9099_8757_67435_CB3C6ANXX_1D_plate5_R1.fastq.gz -o /data/GBS_Xu/qtl1dgbs/1d_demultiplexed_m1_new/1dplate5_%_m1.fq
+
+
+2. read processing
+2.1 filter out q<30, l<50 and trim adaptors
+ls /data/GBS_Xu/qtl1dgbs/1d_demultiplexed_m1_new | grep 'fq$' | sed -r 's/.fq//' | awk 'BEGIN{ print "#!/bin/bash\n\n" }{ print "fastq-mcf -q 30 -l 50 -o /data/GBS_Xu/qtl1dgbs/1d_qc_m1/"$1"_q30l50.fq /data/common_contaminants/IlluminaAdapters_V2.fasta /data/GBS_Xu/qtl1dgbs/1d_demultiplexed_m1_new/"$1".fq"}' > /data/GBS_Xu/qtl1dgbs/scripts/1d_readprocessing.sh
+
+2.2 count the number of reads after read processing
+ls /data/GBS_Xu/qtl1dgbs/1d_qc_m1 | grep '.fq' | sed -r 's/.fq//' | awk 'BEGIN{ print "#!/bin/bash\n" }{ print "expr $(cat /data/GBS_Xu/qtl1dgbs/1d_qc_m1/"$1".fq | wc -l) / 4"}' >/data/GBS_Xu/qtl1dgbs/scripts/1d_postqc_count.sh
+
+2.3 examine read quality in FastQC
+cd /data/software/FastQC 
+fastqc
+
+
+3. read mapping
+3.1 mapco reads using bowtie2
+ls /data/GBS_Xu/qtl1dgbs/1d_qc_m1 | grep 'q30l50.fq' | sed -r 's/_q30l50.fq//' | awk 'BEGIN{ print "#!/bin/bash\n\n"}{ print "bowtie2 -t -p 20 -x /data/bowtieindexes/Lakoh057scf -U /data/GBS_Xu/qtl1dgbs/1d_qc_m1/"$1"_q30l50.fq -S /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1".sam\nsamtools view -F4 -Sb -o /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1".bam /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1".sam\nsamtools sort /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1".bam -o /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1"_sorted\n\n"}' > /data/GBS_Xu/qtl1dgbs/scripts/1d_mapping.sh
+
+3.2 count number of reads after mapping
+ls /data/GBS_Xu/qtl1dgbs/1d_mapped_m1 | grep 'sorted.bam' | awk 'BEGIN{ print"#! /bin/bash\n"}{ print "samtools view -F 4 -c /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/"$1""}' >/data/GBS_Xu/qtl1dgbs/scripts/1dplate2_mapped_count.sh
+
+3.3 prep bam files for SNP calling (add bam read group tags and combine bam files), check the combined file has the right number of individuals and sort bam file
+
+chmod 755 /data/GBS_Xu/qtl1dgbs/scripts/1d_bamaddrg_script.sh
+samtools view -H /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/1d_combined.bam | grep '@RG' | wc -l
+samtools sort /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/1d_combined.bam -o /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/1d_combined_sorted.bam
+
+
+4. SNP calling
+4.1 call SNPs with FreeBayes
+freebayes -i -X -u -b /data/GBS_Xu/qtl1dgbs/1d_mapped_m1/1d_combined_sorted.bam -v /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp.vcf -f /data/bowtieindexes/Lakoh057scf.fa --min-coverage 2 --read-mismatch-limit 2
+
+4.1 count the number of SNP before filtering
+grep -v '#' /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp.vcf | wc -l 
+
+
+5. filter SNP
+5.1 soft filtering
+vcftools --vcf /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp.vcf --remove-indels --min-alleles 2 --max-alleles 2 --maf 0.025 --max-missing 0.8 --minDP 5 --recode --recode-INFO-all --out /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_miss20_maf0.025_mindp5
+
+5.2 hard filtering
+/data/software/vcflib/bin/vcffilter -f "QUAL > 30 & SAP > 0.0001 & SRP > 0.0001" /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_miss20_maf0.025_mindp5.vcf > /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_miss20_maf0.025_mindp5_hardfil.vcf
+
+5.3 count number of SNP post-filtering and obtain mean site depth
+grep -v '#' /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_miss20_maf0.025_mindp5_hardfil.vcf | wc -l 
+vcftools --vcf /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_miss20_maf0.025_mindp5_hardfil.vcf --site-mean-depth --out /data/GBS_Xu/qtl1dgbs/1d_SNP/1d_snp_siteDP
+
+
+==============================Gene prediction======================================
+===================================================================================
+1. build costume repeat library
+mingzi@cornell-X9DAi:/usr/local/RepeatModeler-open-1.0.11$ sudo /usr/local/RepeatModeler-open-1.0.11/RepeatModeler -pa 20 -database /data/bowtieindexes/Lakoh057scf > /data/GBS_Xu/annotation/repeat_mask/Lakoh057scf.out
+Program duration is 792.0 sec = 13.2 min = 0.2 hr
+
+=============================== maker round 1 ======================================
+1. make input fa file
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S000105 Lko057S000162 Lko057S000191 Lko057S000193 Lko057S000202 Lko057S000208 Lko057S000277 Lko057S000325 Lko057S000334 Lko057S000335 Lko057S000368 Lko057S000377 Lko057S000390 Lko057S000409 Lko057S000415 Lko057S000437 Lko057S000468 Lko057S000488 Lko057S000494 Lko057S000534 Lko057S000559 Lko057S000570 Lko057S000577 Lko057S000618 Lko057S000619 Lko057S000625 Lko057S000646 Lko057S000663 Lko057S000671 Lko057S000682 Lko057S000817 Lko057S000846 Lko057S000914 Lko057S000946 Lko057S000949 Lko057S000967 Lko057S001012 Lko057S001104 Lko057S001117 Lko057S001124 Lko057S001235 Lko057S001249 Lko057S001330 Lko057S001332 Lko057S001489 Lko057S001493 Lko057S001506 Lko057S001559 Lko057S001589 Lko057S001633 Lko057S001643 Lko057S001672 Lko057S001680 Lko057S001710 Lko057S001734 Lko057S001745 Lko057S001771 Lko057S001792 Lko057S001867 Lko057S001888 Lko057S001906 Lko057S001910 Lko057S001914 Lko057S001936 Lko057S002041 Lko057S002068 Lko057S002077 Lko057S002082 Lko057S002151 Lko057S002179 Lko057S002206 Lko057S002234 Lko057S002242 Lko057S002274 Lko057S002276 Lko057S002424 Lko057S002469 Lko057S002490 Lko057S002548 Lko057S002553 Lko057S002761 Lko057S002764 Lko057S002871 Lko057S002906 Lko057S002946 Lko057S003059 Lko057S003112 Lko057S003162 Lko057S003259 Lko057S003281 Lko057S003344 Lko057S003407 Lko057S003488 Lko057S003531 Lko057S003597 Lko057S003766 Lko057S004016 Lko057S004073 Lko057S004095 Lko057S004100 Lko057S004205 Lko057S004233 Lko057S004286 Lko057S004313 Lko057S004747 Lko057S004771 Lko057S005037 Lko057S005058 Lko057S005099 Lko057S005105 Lko057S005114 Lko057S005140 Lko057S005654 Lko057S005656 Lko057S005707 Lko057S006291 Lko057S006572 Lko057S006803 Lko057S006859 Lko057S006875 Lko057S007228 Lko057S007321 Lko057S007702 Lko057S007909 Lko057S008178 Lko057S008276 Lko057S008626 Lko057S008708 Lko057S009296 Lko057S009374 Lko057S009651 Lko057S010045 Lko057S011026 Lko057S017174 Lko057S017397 > /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+
+2. make a directory to hold input and output 
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1
+
+3. make maker control files
+cp /data/GBS_Xu/qtl1dgbs/annotation/Maker_old_not_used/S360_r1/maker_bopts.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_bopts.ctl
+cp /data/GBS_Xu/qtl1dgbs/annotation/Maker_old_not_used/S360_r1/maker_exe.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_exe.ctl
+
+cat << EOF > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_opts.ctl
+#-----Genome (these are always required)
+genome=/data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa #genome sequence (fasta file or fasta embeded in GFF3 file)
+organism_type=eukaryotic #eukaryotic or prokaryotic. Default is eukaryotic
+
+#-----Re-annotation Using MAKER Derived GFF3
+maker_gff= #MAKER derived GFF3 file
+est_pass=0 #use ESTs in maker_gff: 1 = yes, 0 = no
+altest_pass=0 #use alternate organism ESTs in maker_gff: 1 = yes, 0 = no
+protein_pass=0 #use protein alignments in maker_gff: 1 = yes, 0 = no
+rm_pass=0 #use repeats in maker_gff: 1 = yes, 0 = no
+model_pass=0 #use gene models in maker_gff: 1 = yes, 0 = no
+pred_pass=0 #use ab-initio predictions in maker_gff: 1 = yes, 0 = no
+other_pass=0 #passthrough anyything else in maker_gff: 1 = yes, 0 = no
+
+#-----EST Evidence (for best results provide a file for at least one)
+est=/data/GBS_Xu/annotation/maker/lk_est_ncbi.fasta,/data/GBS_Xu/annotation/transcriptome/lc_cufflinks_057_transcriptome.fa #set of ESTs or assembled mRNA-seq in fasta format
+altest=/data/GBS_Xu/annotation/maker/reS204_tr17_r1/Gbimaculatus_transcriptome.fa,/data/GBS_Xu/annotation/maker/reS204_tr17_r1/Grubens_transcriptome.fa,/data/GBS_Xu/annotation/maker/reS204_tr17_r1/Teleogryllus_transcriptome_min200bp.fa #EST/cDNA sequence file in fasta format from an alternate organism
+est_gff= #aligned ESTs or mRNA-seq from an external GFF3 file
+altest_gff= #aligned ESTs from a closly relate species in GFF3 format
+
+#-----Protein Homology Evidence (for best results provide a file for at least one)
+protein=/data/GBS_Xu/annotation/maker/uniprot_sprot.fasta #protein sequence file in fasta format (i.e. from mutiple oransisms)
+protein_gff=  #aligned protein homology evidence from an external GFF3 file
+
+#-----Repeat Masking (leave values blank to skip repeat masking)
+model_org=all #select a model organism for RepBase masking in RepeatMasker
+rmlib=/data/GBS_Xu/annotation/repeat_mask/RM_15021.MonMay281322212018_whole_genome_model/consensi.fa.classified #provide an organism specific repeat library in fasta format for RepeatMasker
+repeat_protein=/data/software/maker/data/te_proteins.fasta #provide a fasta file of transposable element proteins for RepeatRunner
+rm_gff= #pre-identified repeat elements from an external GFF3 file
+prok_rm=0 #forces MAKER to repeatmask prokaryotes (no reason to change this), 1 = yes, 0 = no
+softmask=1 #use soft-masking rather than hard-masking in BLAST (i.e. seg and dust filtering)
+
+#-----Gene Prediction
+snaphmm= #SNAP HMM file
+gmhmm= #GeneMark HMM file
+augustus_species= #Augustus gene prediction species model
+fgenesh_par_file= #FGENESH parameter file
+pred_gff= #ab-initio predictions from an external GFF3 file
+model_gff= #annotated gene models from an external GFF3 file (annotation pass-through)
+est2genome=1 #infer gene predictions directly from ESTs, 1 = yes, 0 = no
+protein2genome=1 #infer predictions from protein homology, 1 = yes, 0 = no
+trna=0 #find tRNAs with tRNAscan, 1 = yes, 0 = no
+snoscan_rrna= #rRNA file to have Snoscan find snoRNAs
+unmask=0 #also run ab-initio prediction programs on unmasked sequence, 1 = yes, 0 = no
+
+#-----Other Annotation Feature Types (features MAKER doesn't recognize)
+other_gff= #extra features to pass-through to final MAKER generated GFF3 file
+
+#-----External Application Behavior Options
+alt_peptide=C #amino acid used to replace non-standard amino acids in BLAST databases
+cpus=1 #max number of cpus to use in BLAST and RepeatMasker (not for MPI, leave 1 when using MPI)
+
+#-----MAKER Behavior Options
+max_dna_len=300000 #length for dividing up contigs into chunks (increases/decreases memory usage)
+min_contig=1 #skip genome contigs below this length (under 10kb are often useless)
+
+pred_flank=200 #flank for extending evidence clusters sent to gene predictors
+pred_stats=0 #report AED and QI statistics for all predictions as well as models
+AED_threshold=1 #Maximum Annotation Edit Distance allowed (bound by 0 and 1)
+min_protein=0 #require at least this many amino acids in predicted proteins
+alt_splice=0 #Take extra steps to try and find alternative splicing, 1 = yes, 0 = no
+always_complete=0 #extra steps to force start and stop codons, 1 = yes, 0 = no
+map_forward=0 #map names and attributes forward from old GFF3 genes, 1 = yes, 0 = no
+keep_preds=0 #Concordance threshold to add unsupported gene prediction (bound by 0 and 1)
+
+split_hit=20000 #length for the splitting of hits (expected max intron size for evidence alignments)
+single_exon=0 #consider single exon EST evidence when generating annotations, 1 = yes, 0 = no
+single_length=250 #min length required for single exon ESTs if 'single_exon is enabled'
+correct_est_fusion=0 #limits use of ESTs in annotation to avoid fusion genes
+
+tries=2 #number of times to try a contig if there is a failure for some reason
+clean_try=0 #remove all data from previous run before retrying, 1 = yes, 0 = no
+clean_up=0 #removes theVoid directory with individual analysis files, 1 = yes, 0 = no
+TMP= #specify a directory other than the system default temporary directory for temporary files
+EOF
+
+5. Run maker round 1. 
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_opts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_bopts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_exe.ctl
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1
+nohup /data/software/maker/bin/maker -base lg1_r1 maker_opts.ctl maker_bopts.ctl maker_exe.ctl &
+
+
+6. When the run is finished, run the following commands:
+/data/software/maker/bin/gff3_merge -s -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1.maker.output/lg1_r1_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_all.gff
+
+/data/software/maker/bin/fasta_merge -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1.maker.output/lg1_r1_master_datastore_index.log
+
+/data/software/maker/bin/gff3_merge -s -n -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1.maker.output/lg1_r1_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff
+
+cat /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_all.gff | awk '{ if ($3 == "gene") print $0 }' | awk '{ sum += ($5 - $4) } END { print NR, sum / NR }'
+833 10359
+
+perl /data/software/Genome_annotation/AED_cdf_generator.pl -b 0.025 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_all.gff
+AED	/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_all.gff
+0.000	0.370
+0.025	0.427
+0.050	0.505
+0.075	0.554
+0.100	0.608
+0.125	0.647
+0.150	0.682
+0.175	0.706
+0.200	0.737
+0.225	0.754
+0.250	0.774
+0.275	0.794
+0.300	0.822
+0.325	0.837
+0.350	0.878
+0.375	0.901
+0.400	0.928
+0.425	0.941
+0.450	0.965
+0.475	0.981
+0.500	0.994
+0.525	0.994
+0.550	0.995
+0.575	0.996
+0.600	0.997
+0.625	0.997
+0.650	0.997
+0.675	0.997
+0.700	0.999
+0.725	0.999
+0.750	0.999
+0.775	0.999
+0.800	1.000
+0.825	1.000
+0.850	1.000
+0.875	1.000
+0.900	1.000
+0.925	1.000
+0.950	1.000
+0.975	1.000
+1.000	1.000
+
+
+7. obtain evidence file
+awk '{ if ($2 == "est2genome") print $0 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_est2genome.gff
+awk '{ if ($2 == "cdna2genome") print $0 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_cdna2genome.gff
+awk '{ if ($2 == "protein2genome") print $0 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_protein2genome.gff
+awk '{ if ($2 ~ "repeat") print $0 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_repeats.gff
+
+8. training with SNAP round 1
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1
+cd /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1
+
+/data/software/maker/bin/maker2zff -x 0.5 -l 50 -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1.maker.output/lg1_r1_master_datastore_index.log
+mv genome.ann lg1_r1.zff.aed0.5l50.ann 
+mv genome.dna lg1_r1.zff.aed0.5l50.dna
+/data/software/snap/fathom lg1_r1.zff.aed0.5l50.ann lg1_r1.zff.aed0.5l50.dna -gene-stats > gene-stats.aed0.5l50.log
+/data/software/snap/fathom lg1_r1.zff.aed0.5l50.ann lg1_r1.zff.aed0.5l50.dna -validate > validate.aed0.5l50.log
+909 genes, 909 OK, 441 warnings, 0 errors
+
+sudo /data/software/snap/fathom lg1_r1.zff.aed0.5l50.ann lg1_r1.zff.aed0.5l50.dna -categorize 1000 > categorize.aed0.5l50.log
+sudo /data/software/snap/fathom lg1_r1.zff.aed0.5l50.ann lg1_r1.zff.aed0.5l50.dna -export 1000 -plus > uni-plus.aed0.5l50.log
+sudo /data/software/snap/forge /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1/export.ann /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1/export.dna > /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1/forge.log
+sudo /data/software/snap/hmm-assembler.pl lg1_r1.zff.aed0.5l50 /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1 > /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1/lg1_r1.zff.aed0.5l50.hmm
+
+9. training with Augustus round 1
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1
+
+awk -v OFS="\t" '{ if ($3 == "mRNA") print $1, $4, $5 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_noseq.gff | awk -v OFS="\t" '{ if ($2 < 1000) print $1, "0", $3+1000; else print $1, $2-1000, $3+1000 }' > /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/lg1_r1_all.maker.transcripts1000.pos
+
+## 4 genes goes beyond the scaffold border, manually change these 4 gene bed ##
+Feature (Lko057S001332:203449-208429) beyond the length of Lko057S001332 size (208171 bp).  Skipping.
+Feature (Lko057S001792:4528277-4542522) beyond the length of Lko057S001792 size (4541837 bp).  Skipping.
+Feature (Lko057S001710:331098-343497) beyond the length of Lko057S001710 size (343302 bp).  Skipping.
+Feature (Lko057S001867:1993010-2005801) beyond the length of Lko057S001867 size (2004803 bp).  Skipping.
+
+scp /Users/mingzi/Desktop/lg1_r1_all.maker.transcripts1000.pos mingzi@132.236.112.19:/data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/lg1_r1_all.maker.transcripts1000.pos
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/lg1_r1_all.maker.transcripts1000.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/lg1_r1_all.maker.transcripts1000.pos.fasta
+
+export AUGUSTUS_CONFIG_PATH=/data/software/augustus-3.2.3/config
+export PATH=/data/software/augustus-3.2.3/scripts:/data/software/augustus-3.2.3/bin:$PATH
+export PATH=/data/software/hmmer-3.1b2/src:/usr/lib/emboss:$PATH
+
+python3 /data/software/BUSCO/busco/BUSCO.py -o lg1_r1 -l /data/software/BUSCO/datasets/insecta_odb9 -i /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/lg1_r1_all.maker.transcripts1000.pos.fasta -c 18 --long -sp fly -z --augustus_parameters='--progress=true' -m genome > /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/BUSCO.log
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/run_lg1_r1/augustus_output/retraining_parameters
+rename 's/BUSCO_lg1_r1_293966271/Laupala_kohalensis_lg1_r1/g' *
+sed -i 's/BUSCO_lg1_r1_293966271/Laupala_kohalensis_lg1_r1/g' /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/run_lg1_r1/augustus_output/retraining_parameters/Laupala_kohalensis_lg1_r1_parameters.cfg
+
+mkdir /data/software/augustus-3.2.3/config/species/Laupala_kohalensis_lg1_r1
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r1/run_lg1_r1/augustus_output/retraining_parameters
+mv *.* /data/software/augustus-3.2.3/config/species/Laupala_kohalensis_lg1_r1
+
+
+========================== maker round 2 =========================================
+1. make a directory to hold input and output 
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2
+
+2. make control files
+cp /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/maker_bopts.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_bopts.ctl
+cp /data/GBS_Xu/qtl1dgbs/annotation/Maker_old_not_used/S360_r2/maker_exe.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_exe.ctl
+
+cat << EOF > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_opts.ctl
+#-----Genome (these are always required)
+genome=/data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa #genome sequence (fasta file or fasta embeded in GFF3 file)
+organism_type=eukaryotic #eukaryotic or prokaryotic. Default is eukaryotic
+
+#-----Re-annotation Using MAKER Derived GFF3
+maker_gff= #MAKER derived GFF3 file
+est_pass=0 #use ESTs in maker_gff: 1 = yes, 0 = no
+altest_pass=0 #use alternate organism ESTs in maker_gff: 1 = yes, 0 = no
+protein_pass=0 #use protein alignments in maker_gff: 1 = yes, 0 = no
+rm_pass=0 #use repeats in maker_gff: 1 = yes, 0 = no
+model_pass=0 #use gene models in maker_gff: 1 = yes, 0 = no
+pred_pass=0 #use ab-initio predictions in maker_gff: 1 = yes, 0 = no
+other_pass=0 #passthrough anyything else in maker_gff: 1 = yes, 0 = no
+
+#-----EST Evidence (for best results provide a file for at least one)
+est=  #set of ESTs or assembled mRNA-seq in fasta format
+altest= #EST/cDNA sequence file in fasta format from an alternate organism
+est_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_est2genome.gff #aligned ESTs or mRNA-seq from an external GFF3 file
+altest_gff=/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_cdna2genome.gff #aligned ESTs from a closly relate species in GFF3 format
+
+#-----Protein Homology Evidence (for best results provide a file for at least one)
+protein= #protein sequence file in fasta format (i.e. from mutiple oransisms)
+protein_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_protein2genome.gff#aligned protein homology evidence from an external GFF3 file
+
+#-----Repeat Masking (leave values blank to skip repeat masking)
+model_org= #select a model organism for RepBase masking in RepeatMasker
+rmlib= #provide an organism specific repeat library in fasta format for RepeatMasker
+repeat_protein=/data/software/maker/data/te_proteins.fasta #provide a fasta file of transposable element proteins for RepeatRunner
+rm_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_repeats.gff #pre-identified repeat elements from an external GFF3 file
+prok_rm=0 #forces MAKER to repeatmask prokaryotes (no reason to change this), 1 = yes, 0 = no
+softmask=1 #use soft-masking rather than hard-masking in BLAST (i.e. seg and dust filtering)
+
+#-----Gene Prediction
+snaphmm= /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r1/lg1_r1.zff.aed0.5l50.hmm #SNAP HMM file
+gmhmm= #GeneMark HMM file
+augustus_species= Laupala_kohalensis_lg1_r1 #Augustus gene prediction species model
+fgenesh_par_file= #FGENESH parameter file
+pred_gff= #ab-initio predictions from an external GFF3 file
+model_gff= #annotated gene models from an external GFF3 file (annotation pass-through)
+est2genome=0 #infer gene predictions directly from ESTs, 1 = yes, 0 = no
+protein2genome=0 #infer predictions from protein homology, 1 = yes, 0 = no
+trna=0 #find tRNAs with tRNAscan, 1 = yes, 0 = no
+snoscan_rrna= #rRNA file to have Snoscan find snoRNAs
+unmask=0 #also run ab-initio prediction programs on unmasked sequence, 1 = yes, 0 = no
+
+#-----Other Annotation Feature Types (features MAKER doesn't recognize)
+other_gff= #extra features to pass-through to final MAKER generated GFF3 file
+
+#-----External Application Behavior Options
+alt_peptide=C #amino acid used to replace non-standard amino acids in BLAST databases
+cpus=1 #max number of cpus to use in BLAST and RepeatMasker (not for MPI, leave 1 when using MPI)
+
+#-----MAKER Behavior Options
+max_dna_len=100000 #length for dividing up contigs into chunks (increases/decreases memory usage)
+min_contig=1 #skip genome contigs below this length (under 10kb are often useless)
+
+pred_flank=200 #flank for extending evidence clusters sent to gene predictors
+pred_stats=0 #report AED and QI statistics for all predictions as well as models
+AED_threshold=1 #Maximum Annotation Edit Distance allowed (bound by 0 and 1)
+min_protein=0 #require at least this many amino acids in predicted proteins
+alt_splice=0 #Take extra steps to try and find alternative splicing, 1 = yes, 0 = no
+always_complete=0 #extra steps to force start and stop codons, 1 = yes, 0 = no
+map_forward=0 #map names and attributes forward from old GFF3 genes, 1 = yes, 0 = no
+keep_preds=0 #Concordance threshold to add unsupported gene prediction (bound by 0 and 1)
+
+split_hit=20000 #length for the splitting of hits (expected max intron size for evidence alignments)
+single_exon=0 #consider single exon EST evidence when generating annotations, 1 = yes, 0 = no
+single_length=250 #min length required for single exon ESTs if 'single_exon is enabled'
+correct_est_fusion=0 #limits use of ESTs in annotation to avoid fusion genes
+
+tries=2 #number of times to try a contig if there is a failure for some reason
+clean_try=0 #remove all data from previous run before retrying, 1 = yes, 0 = no
+clean_up=0 #removes theVoid directory with individual analysis files, 1 = yes, 0 = no
+TMP= #specify a directory other than the system default temporary directory for temporary files
+EOF
+
+3. Run maker round 2. 
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_opts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_bopts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_exe.ctl
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2
+nohup /data/software/maker/bin/maker -base lg1_r2 maker_opts.ctl maker_bopts.ctl maker_exe.ctl &
+
+4. When the run is finished, run the following commands:
+/data/software/maker/bin/gff3_merge -s -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2.maker.output/lg1_r2_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_all.gff
+
+/data/software/maker/bin/fasta_merge -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2.maker.output/lg1_r2_master_datastore_index.log
+
+/data/software/maker/bin/gff3_merge -s -n -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2.maker.output/lg1_r2_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_noseq.gff
+
+cat /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_all.gff | awk '{ if ($3 == "gene") print $0 }' | awk '{ sum += ($5 - $4) } END { print NR, sum / NR }'
+962 13833.7
+
+perl /data/software/Genome_annotation/AED_cdf_generator.pl -b 0.025 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_all.gff
+AED	/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_all.gff
+0.000	0.187
+0.025	0.333
+0.050	0.480
+0.075	0.549
+0.100	0.626
+0.125	0.663
+0.150	0.707
+0.175	0.733
+0.200	0.769
+0.225	0.785
+0.250	0.815
+0.275	0.823
+0.300	0.847
+0.325	0.865
+0.350	0.885
+0.375	0.897
+0.400	0.920
+0.425	0.925
+0.450	0.933
+0.475	0.941
+0.500	0.944
+0.525	0.946
+0.550	0.953
+0.575	0.956
+0.600	0.963
+0.625	0.965
+0.650	0.969
+0.675	0.970
+0.700	0.972
+0.725	0.975
+0.750	0.980
+0.775	0.981
+0.800	0.982
+0.825	0.982
+0.850	0.986
+0.875	0.988
+0.900	0.990
+0.925	0.994
+0.950	0.996
+0.975	0.999
+1.000	1.000
+
+5. training with SNAP round 2
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2
+cd /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2
+
+/data/software/maker/bin/maker2zff -x 0.25 -l 50 -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2.maker.output/lg1_r2_master_datastore_index.log
+mv genome.ann lg1_r2.zff.aed0.25l50.ann 
+mv genome.dna lg1_r2.zff.aed0.25l50.dna
+/data/software/snap/fathom lg1_r2.zff.aed0.25l50.ann lg1_r2.zff.aed0.25l50.dna -gene-stats > gene-stats.aed0.25l50.log
+/data/software/snap/fathom lg1_r2.zff.aed0.25l50.ann lg1_r2.zff.aed0.25l50.dna -validate > validate.aed0.25l50.log
+573 genes, 573 OK, 131 warnings, 0 errors
+
+sudo /data/software/snap/fathom lg1_r2.zff.aed0.25l50.ann lg1_r2.zff.aed0.25l50.dna -categorize 1000 > categorize.aed0.25l50.log
+sudo /data/software/snap/fathom lg1_r2.zff.aed0.25l50.ann lg1_r2.zff.aed0.25l50.dna -export 1000 -plus > uni-plus.aed0.25l50.log
+sudo /data/software/snap/forge /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2/export.ann /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2/export.dna > /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2/forge.log
+sudo /data/software/snap/hmm-assembler.pl lg1_r2.zff.aed0.25l50 /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2 > /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2/lg1_r2.zff.aed0.25l50.hmm
+
+
+6. training with Augustus round 2
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2
+
+awk -v OFS="\t" '{ if ($3 == "mRNA") print $1, $4, $5 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/lg1_r2_noseq.gff | awk -v OFS="\t" '{ if ($2 < 1000) print $1, "0", $3+1000; else print $1, $2-1000, $3+1000 }' > /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos.fasta
+
+Feature (Lko057S001332:196177-208429) beyond the length of Lko057S001332 size (208171 bp).  Skipping.
+Feature (Lko057S001792:4536365-4542522) beyond the length of Lko057S001792 size (4541837 bp).  Skipping.
+Feature (Lko057S001710:331098-343497) beyond the length of Lko057S001710 size (343302 bp).  Skipping.
+scp mingzi@132.236.112.19:/data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos /Users/mingzi/Desktop/lg1_r2_all.maker.transcripts1000.pos
+manually change the gene boundaries, save
+scp /Users/mingzi/Desktop/lg1_r2_all.maker.transcripts1000.pos mingzi@132.236.112.19:/data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos
+
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos.fasta
+
+export AUGUSTUS_CONFIG_PATH=/data/software/augustus-3.2.3/config
+export PATH=/data/software/augustus-3.2.3/scripts:/data/software/augustus-3.2.3/bin:$PATH
+export PATH=/data/software/hmmer-3.1b2/src:/usr/lib/emboss:$PATH
+
+python3 /data/software/BUSCO/busco/BUSCO.py -o lg1_r2 -l /data/software/BUSCO/datasets/insecta_odb9 -i /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/lg1_r2_all.maker.transcripts1000.pos.fasta -c 18 --long -sp fly -z --augustus_parameters='--progress=true' -m genome > /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/BUSCO.log
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/run_lg1_r2/augustus_output/retraining_parameters
+rename 's/BUSCO_lg1_r2_2437033475/Laupala_kohalensis_lg1_r2/g' *
+sed -i 's/BUSCO_lg1_r2_2437033475/Laupala_kohalensis_lg1_r2/g' /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/run_lg1_r2/augustus_output/retraining_parameters/Laupala_kohalensis_lg1_r2_parameters.cfg
+
+mkdir /data/software/augustus-3.2.3/config/species/Laupala_kohalensis_lg1_r2
+cd /data/GBS_Xu/qtl1dgbs/annotation/augustus/lg1_r2/run_lg1_r2/augustus_output/retraining_parameters
+mv *.* /data/software/augustus-3.2.3/config/species/Laupala_kohalensis_lg1_r2
+
+
+=============================== maker round 3 ===================================
+1. make a directory to hold input and output 
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3
+
+2. make control files
+cp /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_bopts.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_bopts.ctl
+cp /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r2/maker_exe.ctl /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_exe.ctl
+
+cat << EOF > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_opts.ctl
+#-----Genome (these are always required)
+genome=/data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa #genome sequence (fasta file or fasta embeded in GFF3 file)
+organism_type=eukaryotic #eukaryotic or prokaryotic. Default is eukaryotic
+
+#-----Re-annotation Using MAKER Derived GFF3
+maker_gff= #MAKER derived GFF3 file
+est_pass=0 #use ESTs in maker_gff: 1 = yes, 0 = no
+altest_pass=0 #use alternate organism ESTs in maker_gff: 1 = yes, 0 = no
+protein_pass=0 #use protein alignments in maker_gff: 1 = yes, 0 = no
+rm_pass=0 #use repeats in maker_gff: 1 = yes, 0 = no
+model_pass=0 #use gene models in maker_gff: 1 = yes, 0 = no
+pred_pass=0 #use ab-initio predictions in maker_gff: 1 = yes, 0 = no
+other_pass=0 #passthrough anyything else in maker_gff: 1 = yes, 0 = no
+
+#-----EST Evidence (for best results provide a file for at least one)
+est=  #set of ESTs or assembled mRNA-seq in fasta format
+altest= #EST/cDNA sequence file in fasta format from an alternate organism
+est_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_est2genome.gff #aligned ESTs or mRNA-seq from an external GFF3 file
+altest_gff=/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_cdna2genome.gff,/data/GBS_Xu/annotation/maker/reS204_tr17_r1/reS204_tr17_r1_cdna2genome.gff #aligned ESTs from a closly relate species in GFF3 format
+
+#-----Protein Homology Evidence (for best results provide a file for at least one)
+protein= #protein sequence file in fasta format (i.e. from mutiple oransisms)
+protein_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_protein2genome.gff,/data/GBS_Xu/annotation/maker/reS204_tr17_r1/reS204_tr17_r1_protein2genome.gff #aligned protein homology evidence from an external GFF3 file
+
+#-----Repeat Masking (leave values blank to skip repeat masking)
+model_org= #select a model organism for RepBase masking in RepeatMasker
+rmlib= #provide an organism specific repeat library in fasta format for RepeatMasker
+repeat_protein=/data/software/maker/data/te_proteins.fasta #provide a fasta file of transposable element proteins for RepeatRunner
+rm_gff= /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r1/lg1_r1_repeats.gff,/data/GBS_Xu/annotation/maker/reS204_tr17_r1/reS204_tr17_r1_repeat.gff #pre-identified repeat elements from an external GFF3 file
+prok_rm=0 #forces MAKER to repeatmask prokaryotes (no reason to change this), 1 = yes, 0 = no
+softmask=1 #use soft-masking rather than hard-masking in BLAST (i.e. seg and dust filtering)
+
+#-----Gene Prediction
+snaphmm= /data/GBS_Xu/qtl1dgbs/annotation/snap/lg1_r2/lg1_r2.zff.aed0.25l50.hmm,/data/GBS_Xu/annotation/snap/all_lg5_r2/all_lg5_r2.zff.aed0.5l50.hmm #SNAP HMM file
+gmhmm= #GeneMark HMM file
+augustus_species= Laupala_kohalensis_lg1_r2,Laupala_kohalensis_all_lg5_r2 #Augustus gene prediction species model
+fgenesh_par_file= #FGENESH parameter file
+pred_gff= #ab-initio predictions from an external GFF3 file
+model_gff= #annotated gene models from an external GFF3 file (annotation pass-through)
+est2genome=0 #infer gene predictions directly from ESTs, 1 = yes, 0 = no
+protein2genome=0 #infer predictions from protein homology, 1 = yes, 0 = no
+trna=0 #find tRNAs with tRNAscan, 1 = yes, 0 = no
+snoscan_rrna= #rRNA file to have Snoscan find snoRNAs
+unmask=0 #also run ab-initio prediction programs on unmasked sequence, 1 = yes, 0 = no
+
+#-----Other Annotation Feature Types (features MAKER doesn't recognize)
+other_gff= #extra features to pass-through to final MAKER generated GFF3 file
+
+#-----External Application Behavior Options
+alt_peptide=C #amino acid used to replace non-standard amino acids in BLAST databases
+cpus=1 #max number of cpus to use in BLAST and RepeatMasker (not for MPI, leave 1 when using MPI)
+
+#-----MAKER Behavior Options
+max_dna_len=100000 #length for dividing up contigs into chunks (increases/decreases memory usage)
+min_contig=1 #skip genome contigs below this length (under 10kb are often useless)
+
+pred_flank=200 #flank for extending evidence clusters sent to gene predictors
+pred_stats=0 #report AED and QI statistics for all predictions as well as models
+AED_threshold=1 #Maximum Annotation Edit Distance allowed (bound by 0 and 1)
+min_protein=0 #require at least this many amino acids in predicted proteins
+alt_splice=0 #Take extra steps to try and find alternative splicing, 1 = yes, 0 = no
+always_complete=0 #extra steps to force start and stop codons, 1 = yes, 0 = no
+map_forward=0 #map names and attributes forward from old GFF3 genes, 1 = yes, 0 = no
+keep_preds=0 #Concordance threshold to add unsupported gene prediction (bound by 0 and 1)
+
+split_hit=20000 #length for the splitting of hits (expected max intron size for evidence alignments)
+single_exon=0 #consider single exon EST evidence when generating annotations, 1 = yes, 0 = no
+single_length=250 #min length required for single exon ESTs if 'single_exon is enabled'
+correct_est_fusion=0 #limits use of ESTs in annotation to avoid fusion genes
+
+tries=2 #number of times to try a contig if there is a failure for some reason
+clean_try=0 #remove all data from previous run before retrying, 1 = yes, 0 = no
+clean_up=0 #removes theVoid directory with individual analysis files, 1 = yes, 0 = no
+TMP= #specify a directory other than the system default temporary directory for temporary files
+EOF
+
+
+4. Run maker round 3. 
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_opts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_bopts.ctl
+chmod 755 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/maker_exe.ctl
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3
+nohup /data/software/maker/bin/maker -base lg1_r3 maker_opts.ctl maker_bopts.ctl maker_exe.ctl &
+
+
+5. When the run is finished, run the following commands:
+/data/software/maker/bin/gff3_merge -s -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3.maker.output/lg1_r3_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.gff
+
+/data/software/maker/bin/fasta_merge -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3.maker.output/lg1_r3_master_datastore_index.log
+
+/data/software/maker/bin/gff3_merge -s -n -d /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3.maker.output/lg1_r3_master_datastore_index.log > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_noseq.gff
+
+cat /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.gff | awk '{ if ($3 == "gene") print $0 }' | awk '{ sum += ($5 - $4) } END { print NR, sum / NR }'
+983 13005.8
+
+perl /data/software/Genome_annotation/AED_cdf_generator.pl -b 0.025 /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.gff
+AED	/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.gff
+0.000	0.234
+0.025	0.390
+0.050	0.536
+0.075	0.598
+0.100	0.669
+0.125	0.706
+0.150	0.751
+0.175	0.774
+0.200	0.797
+0.225	0.809
+0.250	0.833
+0.275	0.846
+0.300	0.869
+0.325	0.875
+0.350	0.889
+0.375	0.898
+0.400	0.907
+0.425	0.914
+0.450	0.927
+0.475	0.930
+0.500	0.936
+0.525	0.942
+0.550	0.950
+0.575	0.953
+0.600	0.955
+0.625	0.960
+0.650	0.962
+0.675	0.964
+0.700	0.968
+0.725	0.970
+0.750	0.975
+0.775	0.977
+0.800	0.979
+0.825	0.985
+0.850	0.990
+0.875	0.993
+0.900	0.995
+0.925	0.995
+0.950	0.999
+0.975	0.999
+1.000	1.000
+
+6. Obtain gene sequences
+cat /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.gff | awk '{ if ($3 == "gene") print $0 }' > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_genes.gff
+
+awk -v OFS="\t" '{ if ($3 == "gene") print $1, $4, $5 }' /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_noseq.gff > /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_all.maker.genes.pos
+subset for only scaffolds within the confidence interval:
+/data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak.scaffold.genes.pos
+
+cd /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak.scaffold.genes.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak_scaffold_gene.fasta
+
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak.scaffold.genes.2.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak_scaffold_gene_2.fasta
+
+
+=============================== functional annotation ==================================
+========================================================================================
+1. blast against NCBI nr database the animal subset
+cd /data/GBS_Xu/qtl1dgbs/annotation/blast
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/nr/Animalia_nr/animalia_nr -query /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak_scaffold_gene.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_lg1_r3_peak_scaffold_genes_nr_ani_e1 -evalue 1 -outfmt 14 -num_threads 9 &
+
+2. blast against uniprot database
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/Uniprot_Swissprot/uniprot_sprot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/lg1_r3_peak_scaffold_gene.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_lg1_r3_peak_scaffold_genes_uniprot_e1 -evalue 1 -outfmt 14 -num_threads 9 &
+
+3. reblast NA genes against nr animal database using E cutoff of 100
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/NA_genes.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/maker/lg1_r3/NA_genes.fasta
+
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/nr/Animalia_nr/animalia_nr -query /data/GBS_Xu/qtl1dgbs/annotation/blast/lg1_r3_NA_gene.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_NA_genes_nr_ani_e100 -evalue 100 -outfmt 14 -num_threads 15 &
+
+4. combine genes that appear to be fragmented (adjacent genes with the same annotation) and reblast
+samtools faidx /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa
+/usr/bin/bedtools getfasta -fi /data/GBS_Xu/qtl1dgbs/annotation/maker/1d_lg1_4maps_scaffolds.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lg1_r3_fragmented_genes_combined.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lg1_r3_fragmented_genes_combined.fasta
+
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/nr/Animalia_nr/animalia_nr -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lg1_r3_fragmented_genes_combined.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_lg1_r3_fragmented_genes_combined_nr_ani_e1 -evalue 1 -outfmt 14 -num_threads 20 &
+
+
+5. make a new sequence file for manually curated genes, blast to NCBI and uniprot
+scp /Users/mingzi/Documents/DATA/QTL\ fine\ mapping/QTL1/Script/lg1_r3_peak.scaffold.genes.refined.pos mingzi@132.236.112.19:/data/GBS_Xu/qtl1dgbs/annotation/blast/
+sudo samtools faidx /data/bowtieindexes/Lakoh057scf.fa
+/usr/bin/bedtools getfasta -fi /data/bowtieindexes/Lakoh057scf.fa -bed /data/GBS_Xu/qtl1dgbs/annotation/blast/lg1_r3_peak.scaffold.genes.refined.pos -fo /data/GBS_Xu/qtl1dgbs/annotation/blast/lg1_r3_peak.scaffold.genes.refined.fasta
+
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/nr/Animalia_nr/animalia_nr -query /data/GBS_Xu/qtl1dgbs/annotation/blast/lg1_r3_peak.scaffold.genes.refined.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_lg1_r3_peak_scaffold_genes_refined_nr_ani_e1 -evalue 1 -outfmt 14 -num_threads 20 &
+
+nohup /usr/local/bin/blastx -task blastx -db /data/Blast_DB/Uniprot_Swissprot/uniprot_sprot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/blast/lg1_r3_peak.scaffold.genes.refined.fasta -out /data/GBS_Xu/qtl1dgbs/annotation/blast/blastx_lg1_r3_peak_scaffold_genes_refined_uniprot_e1 -evalue 1 -outfmt 14 -num_threads 20 &
+
+6. reciprocal blast for interesting genes to further discern their identity
+6.1 camta
+
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_camta.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/camta/tblastn_Lko057_Dro_camta_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_camta.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/camta/tblastn_Lko057_Dro_camta_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S004073:124210-440300 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_camta_comb.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_camta_comb.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/camta/blastx_Dmel_prot_lk_camta_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_camta_comb.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/camta/blastx_Dmel_prot_lk_camta_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.2 innexin inx1
+
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_inx1.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx1/tblastn_Lko057_Dro_inx1_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_inx1.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx1/tblastn_Lko057_Dro_inx1_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S008276:180204-181661 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_inx1.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_inx1.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx1/blastx_Dmel_prot_lk_inx1_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lk_inx1.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx1/blastx_Dmel_prot_lk_inx1_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.3 innexin inx2
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_inx2.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/tblastn_Lko057_Dro_inx2_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_inx2.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/tblastn_Lko057_Dro_inx2_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S008276:65020-66091 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/lk_inx2.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/lk_inx2.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/blastx_Dmel_prot_lk_inx2_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/lk_inx2.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/blastx_Dmel_prot_lk_inx2_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.4 anoctamin-1
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/Dro_subdued.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/tblastn_Lko057_Dro_ano1_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/Dro_subdued.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/inx2/tblastn_Lko057_Dro_ano1_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S002553:43577-56694 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/lk_ano1.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/lk_ano1.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/blastx_Dmel_prot_lk_ano1_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/lk_ano1.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/ano1/blastx_Dmel_prot_lk_ano1_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.5 liprin-a-1
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/Dro_lip.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/tblastn_Lko057_Dro_lip_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/Dro_lip.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/tblastn_Lko057_Dro_lip_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S000208:675578-985908 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/lk_lip.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/lk_lip.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/blastx_Dmel_prot_lk_lip_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/lk_lip.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/lip/blastx_Dmel_prot_lk_lip_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.6 neurobeachin
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_neuro-like.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/tblastn_Lko057_Dro_neu_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/Dro_neuro-like.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/tblastn_Lko057_Dro_neu_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S004286:58414-554190 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/lk_neu.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/lk_neu.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/blastx_Dmel_prot_lk_neu_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/lk_neu.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/neu/blastx_Dmel_prot_lk_neu_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.7 sarcalumenin
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/Aedes_sar.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/tblastn_Lko057_Aedes_sar_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/Aedes_sar.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/tblastn_Lko057_Aedes_sar_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S000494:1145934-1153041 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/lk_sar.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/lk_sar.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/blastx_Dmel_prot_lk_sar_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/lk_sar.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/blastx_Dmel_prot_lk_sar_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/Dmel_CG9297.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/tblastn_Lko057_Dro_CG9297_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/Dmel_CG9297.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/sar/tblastn_Lko057_Dro_CG9297_1.xml
+
+6.8 octopamine receptor
+Download 8 different Dro oct protein sequences:
+alpha2-adrenergic-like octopamine receptor, G-protein coupled octopamine receptor, octopamine beta1 receptor, octopamine beta2 receptor, octopamine beta3 receptor, octopamine receptor in mushroom bodies, octopamine receptor OAMB, Octopamine-Tyramine receptor
+
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/Dro_oct.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/tblastn_Lko057_Dro_oct_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/Dro_oct.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/tblastn_Lko057_Dro_oct_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S000619:625801-764361 > /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/lk_oct.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/lk_oct.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/blastx_Dmel_prot_lk_oct_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/lk_oct.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/oct/blastx_Dmel_prot_lk_oct_1.xml -evalue 1 -outfmt 5 -num_threads 20
+
+6.9 integrin beta PS
+mkdir /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/int.fasta -evalue 1 -num_threads 20 -outfmt 6 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/tblastn_Lko057_int_1.txt
+/usr/local/bin/tblastn -task tblastn -db /data/GBS_Xu/annotation/blast/Lakoh057scf_masked.fa -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/int.fasta -evalue 1 -num_threads 20 -outfmt 5 -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/tblastn_Lko057_int_1.xml
+
+samtools faidx /data/bowtieindexes/Lakoh057scf.fa Lko057S002871:121181-147085> /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/lk_int.fa
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/lk_int.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/blastx_Dmel_prot_lk_int_1.txt -evalue 1 -outfmt 6 -num_threads 20
+/usr/local/bin/blastx -task blastx -db /data/Blast_DB/Dmel_proteome/Dmel_prot.fasta -query /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/lk_int.fa -out /data/GBS_Xu/qtl1dgbs/annotation/manual_refinement/int/blastx_Dmel_prot_lk_int_1.xml -evalue 1 -outfmt 5 -num_threads 20

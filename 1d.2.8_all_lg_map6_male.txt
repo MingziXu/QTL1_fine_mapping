@@ -1,0 +1,71 @@
+> qtl1d.2.8.m<-read.cross(format="csv",file="1d.2.8_all_lg_map6_male.csv")
+> qtl1d.2.8.m.gp.02<-calc.genoprob(qtl1d.2.8.m,step=0.2,map.function=c("kosambi"),error.prob=0.001)
+
+> qtl1d.2.8.m.one.02<-scanone(qtl1d.2.8.m.gp.02)
+> summary(qtl1d.2.8.m.one.02)
+> 
+> qtl1d.2.8.m.two<-scantwo(qtl1d.2.8.m.gp.02)
+> summary(qtl1d.2.8.m.two)
+> 
+> qtl1d.2.8.m.sim.02<-sim.geno(qtl1d.2.8.m.gp.02,step=0.2,n.draw=20000,map.function=c("kosambi"),err=0.001)
+> qtl1d.2.8.m.make1.02<-makeqtl(qtl1d.2.8.m.sim.02,chr=1,pos=67.4)
+> qtl1d.2.8.m.fit.make1.02<-fitqtl(qtl1d.2.8.m.sim.02,qtl=qtl1d.2.8.m.make1.02,formula=y~Q1)
+> summary(qtl1d.2.8.m.fit.make1.02)                                                  
+
+> qtl1d.2.8.m.refine1.02<-refineqtl(qtl1d.2.8.m.sim.02,qtl=qtl1d.2.8.m.make1.02,formula=y~Q1,verbose=FALSE)
+> summary(qtl1d.2.8.m.refine1.02)
+> 
+> qtl1d.2.8.m.fit.refine1.02<-fitqtl(qtl1d.2.8.m.sim.02,qtl=qtl1d.2.8.m.refine1.02,formula=y~Q1)
+> summary(qtl1d.2.8.m.fit.refine1.02)                                       
+
+> qtl1d.2.8.m.add1<-addqtl(qtl1d.2.8.m.sim.02,qtl=qtl1d.2.8.m.refine1.02,formula=y~Q1+Q2)
+> summary(qtl1d.2.8.m.add1)
+> 
+> find.marker(qtl1d.2.8.m,chr=1,pos=67.6)
+
+> lodint(qtl1d.2.8.m.one.02,chr=1)
+> lodint(qtl1d.2.8.m.one.02,chr=1,expandtomarkers=TRUE)
+> lodint(qtl1d.2.8.m.refine1.02,qtl.index=1)
+> lodint(qtl1d.2.8.m.refine1.02,qtl.index=1,expandtomarkers=TRUE)
+
+> qtl1d.2.8.m.q1.eff.refined<-fitqtl(qtl1d.2.8.m.sim.02,qtl=qtl1d.2.8.m.refine1.02,formula=y~Q1,dropone=FALSE,get.est=TRUE)
+> summary(qtl1d.2.8.m.q1.eff.refined)
+
+> qtl1d.2.8.m.q1.eff.02<-effectplot(qtl1d.2.8.m.sim.02,mname1="S000494_888325",draw=FALSE)
+> qtl1d.2.8.m.q1.eff.02
+
+=====================================
+> qtl1d.2.8.one.perm<-scanone(qtl1d.2.8.m.gp.02,n.perm=20000,verbose=FALSE)
+> summary(qtl1d.2.8.one.perm)
+
+> set.seed(85842519)
+> qtl1d.2.8.m.perm2.a<-scantwo(qtl1d.2.8.m.sim.02,method="hk",n.perm=250)
+Doing permutation in batch mode ...
+> 
+> set.seed(85842520)
+> save(qtl1d.2.8.m.perm2.a,file="/media/thomas/ICE/qtl1d.2.8.m.perm2.a.RData")
+> 
+> qtl1d.2.8.m.perm2.b<-scantwo(qtl1d.2.8.m.sim.02,method="hk",n.perm=250)
+Doing permutation in batch mode ...
+> save(qtl1d.2.8.m.perm2.b,file="/media/thomas/ICE/qtl1d.2.8.m.perm2.b.RData")
+> 
+> set.seed(85842521)
+> qtl1d.2.8.m.perm2.c<-scantwo(qtl1d.2.8.m.sim.02,method="hk",n.perm=250)
+Doing permutation in batch mode ...
+> save(qtl1d.2.8.m.perm2.c,file="/media/thomas/ICE/qtl1d.2.8.m.perm2.c.RData")
+> 
+> set.seed(85842525)
+> qtl1d.2.8.m.perm2.d<-scantwo(qtl1d.2.8.m.sim.02,method="hk",n.perm=250)
+Doing permutation in batch mode ...
+> save(qtl1d.2.8.m.perm2.d,file="/media/thomas/ICE/qtl1d.2.8.m.perm2.d.RData")
+> 
+> load("/media/thomas/ICE/qtl1d.2.8.m.perm2.a.RData")
+> load("/media/thomas/ICE/qtl1d.2.8.m.perm2.b.RData")
+> load("/media/thomas/ICE/qtl1d.2.8.m.perm2.c.RData")
+> load("/media/thomas/ICE/qtl1d.2.8.m.perm2.d.RData")
+> 
+> qtl1d.2.8.m.perm2<-c(qtl1d.2.8.m.perm2.a,qtl1d.2.8.m.perm2.b,qtl1d.2.8.m.perm2.c,qtl1d.2.8.m.perm2.d)
+> summary(qtl1d.2.8.m.perm2)
+> 
+> qtl1d.2.8.m.pen<-calc.penalties(qtl1d.2.8.m.perm2)
+> print(qtl1d.2.8.m.pen)

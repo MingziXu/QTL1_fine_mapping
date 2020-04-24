@@ -1,0 +1,154 @@
+1. import data, calculate genotype probability and run genotype simulation
+> library(qtl)
+> qtl1d.int.m<-read.cross(format="csv",file="1d_combined_family_integrated_map6_male.csv") 
+> qtl1d.int.m.gp<-calc.genoprob(qtl1d.int.m,step=0.2,error.prob=0.001)
+> qtl1d.int.m.sim<-sim.geno(qtl1d.int.m.gp,step=0.2,n.draw=7500,map.function=c("kosambi"),err=0.001)
+
+===========================================
+2. test for family effect
+> qtl1d.int.m$pheno$fam<-as.factor(qtl1d.int.m$pheno$fam)
+> anova(aov(qtl1d.int.m$pheno$pheno~qtl1d.int.m$pheno$fam))
+> m.fam<-aov(qtl1d.int.m$pheno$pheno~qtl1d.int.m$pheno$fam)
+> TukeyHSD(m.fam)
+ 
+============================================
+3. standard interval mapping and composite interval mapping
+> qtl1d.int.m$pheno$fam<-as.numeric(qtl1d.int.m$pheno$fam)
+> qtl1d.int.m.one.cov<-scanone(qtl1d.int.m.gp,method="em",addcovar=qtl1d.int.m$pheno$fam)
+> summary(qtl1d.int.m.one.cov)
+> 
+> qtl1d.int.m.cim.1.20<-cim(qtl1d.int.m.gp,n.marcovar=1,window=20)
+> summary(qtl1d.int.m.cim.1.20)
+> 
+> qtl1d.int.m.cim.2.20<-cim(qtl1d.int.m.gp,n.marcovar=2,window=20)
+> summary(qtl1d.int.m.cim.2.20)
+> 
+> qtl1d.int.m.cim.3.20<-cim(qtl1d.int.m.gp,n.marcovar=3,window=20)
+> summary(qtl1d.int.m.cim.3.20)
+
+=================================
+4. two QTL scan
+> qtl1d.int.m.two<-scantwo(qtl1d.int.m.gp)
+> summary(qtl1d.int.m.two)
+
+=================================
+5. multiple QTL models
+5.1 prep family as a covariate
+> qtl1d.int.m$pheno$fam<-as.numeric(qtl1d.int.m$pheno$fam)
+> fam<-pull.pheno(qtl1d.int.m,"fam")
+> fam<-data.frame(fam)
+
+5.2 1-QTL MQM
+5.2.1 begin with a one QTL model at the location indicated by SIM and fit the model with an ANCOVA
+> qtl1d.int.m.make1<-makeqtl(qtl1d.int.m.sim,chr=1,pos=63)
+> qtl1d.int.m.fit.make1.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make1,covar=fam,formula=y~Q1+fam)
+> summary(qtl1d.int.m.fit.make1.cov)
+5.2.2 refine QTL location with multiple imputation
+> qtl1d.int.m.refine1.cov<-refineqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make1,covar=fam,method="imp",formula=y~Q1+fam,verbose=FALSE)
+> summary(qtl1d.int.m.refine1.cov) 
+5.2.3 refit the model with the refined location
+> qtl1d.int.m.fit.refine1.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.refine1.cov,covar=fam,formula=y~Q1+fam)
+> summary(qtl1d.int.m.fit.refine1.cov)
+5.2.4 scan for additional QTL given the first QTL
+> qtl1d.int.m.add1<-addqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.refine1.cov,covar=fam,formula=y~Q1+Q2+fam)
+> summary(qtl1d.int.m.add1)
+
+5.3 2-QTL MQM
+## make a 2-QTL model with the first QTL at its refined location and the QTL with the highest and significant LOD score in the addqtl() output; repeat the same process as in 5.2.1-5.2.4 ##
+> qtl1d.int.m.make2<-makeqtl(qtl1d.int.m.sim,chr=c(1,1),pos=c(63,135))
+> qtl1d.int.m.fit.make2.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make2,covar=fam,formula=y~Q1+Q2+fam)
+> summary(qtl1d.int.m.fit.make2.cov)
+> qtl1d.int.refine2.cov<-refineqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make2,covar=fam,method="imp",formula=y~Q1+Q2+fam,verbose=FALSE)
+> summary(qtl1d.int.refine2.cov)
+> qtl1d.int.m.fit.refine2.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine2.cov,covar=fam,formula=y~Q1+Q2+fam)
+> summary(qtl1d.int.m.fit.refine2.cov)
+> addint(qtl1d.int.m.sim,qtl=qtl1d.int.refine2.cov,covar=fam,method="imp",formula=y~Q1+Q2+fam,verbose=FALSE)
+> qtl1d.int.m.add2<-addqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine2.cov,covar=fam,formula=y~Q1+Q2+Q3+fam)
+> summary(qtl1d.int.m.add2)
+
+5.4 3-QTL model
+> qtl1d.int.m.make3<-makeqtl(qtl1d.int.m.sim,chr=c(1,1,1),pos=c(56.6,63,134.6)) 
+> qtl1d.int.m.fit.make3.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make3,covar=fam,formula=y~Q1+Q2+Q3+fam)
+> summary(qtl1d.int.m.fit.make3.cov)
+> qtl1d.int.refine3.cov<-refineqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make3,covar=fam,method="imp",formula=y~Q1+Q2+Q3+fam,verbose=FALSE)
+> summary(qtl1d.int.refine3.cov)
+> qtl1d.int.m.fit.refine3.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine3.cov,covar=fam,formula=y~Q1+Q2+Q3+fam)
+> summary(qtl1d.int.m.fit.refine3.cov)
+> addint(qtl1d.int.m.sim,qtl=qtl1d.int.refine3.cov,covar=fam,method="imp",formula=y~Q1+Q2+Q3+fam,verbose=FALSE)
+> qtl1d.int.m.add3<-addqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine3.cov,covar=fam,formula=y~Q1+Q2+Q3+fam)
+> summary(qtl1d.int.m.add3)
+
+5.5 4-QTL model
+> qtl1d.int.m.make4<-makeqtl(qtl1d.int.m.sim,chr=c(1,1,1,1),pos=c(56.6,63.2,97.2,124.5))
+> qtl1d.int.m.fit.make4.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make4,covar=fam,formula=y~Q1+Q2+Q3+Q4+fam)
+>  summary(qtl1d.int.m.fit.make4.cov)
+> qtl1d.int.refine4.cov<-refineqtl(qtl1d.int.m.sim,qtl=qtl1d.int.m.make4,covar=fam,method="imp",formula=y~Q1+Q2+Q3+Q4+fam,verbose=FALSE)
+> summary(qtl1d.int.refine4.cov)
+> qtl1d.int.m.fit.refine4.cov<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine4.cov,covar=fam,formula=y~Q1+Q2+Q3+Q4+fam)
+> summary(qtl1d.int.m.fit.refine4.cov)
+> addint(qtl1d.int.m.sim,qtl=qtl1d.int.refine4.cov,covar=fam,method="imp",formula=y~Q1+Q2+Q3+Q4+fam,verbose=FALSE)
+> qtl1d.int.m.add4<-addqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine4.cov,covar=fam,formula=y~Q1+Q2+Q3+Q4+fam)
+> summary(qtl1d.int.m.add4)
+## no indication of additional QTL, stop here ##
+
+======================================
+6. estimate effect sizes
+6.1 find the markers closest to the peak
+> find.marker(qtl1d.int.m,chr=1,pos=56.6)
+[1] "S000967_98977"
+> find.marker(qtl1d.int.m,chr=1,pos=63.2)
+[1] "S000494_888325"
+> find.marker(qtl1d.int.m,chr=1,pos=97.2)
+[1] "S001672_375354"
+> find.marker(qtl1d.int.m,chr=1,pos=124.5)
+[1] "S004095_92718"
+
+6.2 calculate mean and se of 3 genotypes at the peak markers
+> qtl1d.int.m.eff.q1<-effectplot(qtl1d.int.m.sim,mname1="S000967_98977",draw=FALSE)
+> qtl1d.int.m.eff.q1
+
+> qtl1d.int.m.eff.q2<-effectplot(qtl1d.int.m.sim,mname1="S000494_888325",draw=FALSE)
+> qtl1d.int.m.eff.q2
+
+> qtl1d.int.m.eff.q3<-effectplot(qtl1d.int.m.sim,mname1="S001672_375354",draw=FALSE)
+> qtl1d.int.m.eff.q3
+
+> qtl1d.int.m.eff.q4<-effectplot(qtl1d.int.m.sim,mname1="S004095_92718",draw=FALSE)
+> qtl1d.int.m.eff.q4
+
+6.3 estimate effect size from the final MQM (4-QTL model) using by dropping one QTL at a time
+> qtl1d.int.m.fit.refine4.cov.eff<-fitqtl(qtl1d.int.m.sim,qtl=qtl1d.int.refine4.cov,covar=fam,formula=y~Q1+Q2+Q3+Q4+fam,dropone=FALSE,get.est=TRUE)
+> summary(qtl1d.int.m.fit.refine4.cov.eff)
+
+=====================================
+7. find the 1.5-LOD confidence intervals of the significant QTL both as is and extended to the closest flanking markers
+> lodint(qtl1d.int.m.one.cov)
+> lodint(qtl1d.int.m.one.cov,expandtomarkers=TRUE)
+> lodint(qtl1d.int.refine4.cov,qtl.index=1)
+> lodint(qtl1d.int.refine4.cov,qtl.index=1,expandtomarkers=TRUE)
+> lodint(qtl1d.int.refine4.cov,qtl.index=2)
+> lodint(qtl1d.int.refine4.cov,qtl.index=2,expandtomarkers=TRUE)
+> lodint(qtl1d.int.refine4.cov,qtl.index=3)
+> lodint(qtl1d.int.refine4.cov,qtl.index=3,expandtomarkers=TRUE)
+>  lodint(qtl1d.int.refine4.cov,qtl.index=4)
+> lodint(qtl1d.int.refine4.cov,qtl.index=4,expandtomarkers=TRUE)
+
+===============================================
+8. calculate significant threshold
+8.1 threshold for SIM
+> qtl1d.int.m.one.perm<-scanone(qtl1d.int.m.gp,n.perm=10000,verbose=FALSE)
+> summary(qtl1d.int.m.one.perm)
+
+8.2 threshold for MQM 
+> qtl1d.int.m.perm2<-scantwo(qtl1d.int.m.sim,method="hk",n.perm=1000)
+Doing permutation in batch mode ...
+> summary(qtl1d.int.m.perm2)
+
+8.3 calculate penalty values for model selection
+> qtl1d.int.m.pen<-calc.penalties(qtl1d.int.m.perm2)
+> print(qtl1d.int.m.pen)
+
+====================================
+9. output LOD profile of SIM and the final MQM model
+> qtl1d.int.m.one.cov
+> attr(qtl1d.int.refine4.cov,"lodprofile")
